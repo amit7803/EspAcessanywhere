@@ -1,0 +1,131 @@
+#include <ESP8266WiFi.h>      
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+
+// ---------- WiFi Config ----------
+const char* ssid = "AI Control Hub";
+const char* password = "3t2nsaaa9v";
+
+// ---------- Flask Server URL ----------
+String serverUrl = "https://serveresp1.pythonanywhere.com/get_state";
+
+// Store which pins are already initialized
+bool pinInitialized[40];
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected! IP: " + WiFi.localIP().toString());
+  } else {
+    Serial.println("\nFailed to connect to WiFi!");
+  }
+
+  for (int i = 0; i < 40; i++) {
+    pinInitialized[i] = false;
+  }
+}
+
+void loop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(10000);
+
+    HTTPClient http;
+    http.setTimeout(10000);
+    
+    Serial.println("Attempting to connect to server...");
+    
+    if (http.begin(client, serverUrl)) {
+      int httpCode = http.GET();
+      Serial.println("HTTP Code: " + String(httpCode));
+      
+      if (httpCode == 200) {
+        String payload = http.getString();
+        Serial.println("Server Response: " + payload);
+
+        StaticJsonDocument<1024> doc; // Increased size for nested JSON
+        DeserializationError error = deserializeJson(doc, payload);
+
+        if (!error) {
+          // Loop through each key ("1", "2", "3", etc.)
+          for (JsonPair kv : doc.as<JsonObject>()) {
+            String key = kv.key().c_str();
+            JsonObject device = kv.value().as<JsonObject>();
+            
+            // Extract GPIO number and state
+            int gpioNum;
+            String state;
+            
+            // Handle both string and integer GPIO values
+            if (device["gpio"].is<int>()) {
+              gpioNum = device["gpio"];
+            } else if (device["gpio"].is<const char*>()) {
+              gpioNum = String(device["gpio"].as<const char*>()).toInt();
+            } else {
+              Serial.println("Invalid GPIO format for key: " + key);
+              continue;
+            }
+            
+            state = device["state"].as<String>();
+            state.toUpperCase(); // Convert to uppercase for consistency
+            
+            Serial.println("Key: " + key + ", GPIO: " + String(gpioNum) + ", State: " + state);
+            
+            // Validate GPIO pin for ESP8266
+            if (gpioNum >= 0 && gpioNum <= 16) {
+              // Skip invalid ESP8266 pins
+              if (gpioNum == 6 || gpioNum == 7 || gpioNum == 8 || gpioNum == 11) {
+                Serial.println("Skipping invalid pin: " + String(gpioNum));
+                continue;
+              }
+              
+              if (!pinInitialized[gpioNum]) {
+                pinMode(gpioNum, OUTPUT);
+                pinInitialized[gpioNum] = true;
+                Serial.println("Initialized GPIO " + String(gpioNum));
+              }
+
+              if (state == "ON" || state == "1" || state == "HIGH") {
+                digitalWrite(gpioNum, HIGH);
+                Serial.println("GPIO " + String(gpioNum) + " -> ON");
+              } else if (state == "OFF" || state == "0" || state == "LOW") {
+                digitalWrite(gpioNum, LOW);
+                Serial.println("GPIO " + String(gpioNum) + " -> OFF");
+              } else {
+                Serial.println("Unknown state: " + state);
+              }
+            } else {
+              Serial.println("Invalid GPIO number: " + String(gpioNum));
+            }
+          }
+        } else {
+          Serial.print("JSON parse failed: ");
+          Serial.println(error.c_str());
+        }
+      } else {
+        Serial.println("HTTP Error: " + String(httpCode));
+      }
+      http.end();
+    } else {
+      Serial.println("HTTP connection failed!");
+    }
+  } else {
+    Serial.println("WiFi disconnected! Attempting to reconnect...");
+    WiFi.begin(ssid, password);
+  }
+  delay(2000);
+}
