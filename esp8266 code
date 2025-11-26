@@ -4,11 +4,11 @@
 #include <ArduinoJson.h>
 
 // ---------- WiFi Config ----------
-const char* ssid = "AI Control Hub";
-const char* password = "3t2nsaaa9v";
+const char* ssid = "ssid";// ssid here
+const char* password = "pass";//pass
 
 // ---------- Flask Server URL ----------
-String serverUrl = "https://serveresp1.pythonanywhere.com/get_state";
+String serverUrl = "domain name here/get_state";// put domain name here
 
 // Store which pins are already initialized
 bool pinInitialized[40];
